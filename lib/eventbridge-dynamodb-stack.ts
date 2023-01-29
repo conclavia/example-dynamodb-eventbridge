@@ -59,9 +59,9 @@ export class EventbridgeDynamodbStack extends cdk.Stack {
     bus.grantPutEventsTo(streamFn.grantPrincipal);
 
     /*
-      An example downstream function that is interested in some subset of our events.
+      An example downstream function that is only interested in events where the value2 field changed.
     */
-    const targetFn = new lambda.Function(this, "TargetFunction", {
+    const target1Fn = new lambda.Function(this, "Target1Function", {
       runtime: lambda.Runtime.NODEJS_16_X,
       handler: "index.handler",
       code: lambda.Code.fromAsset(
@@ -72,7 +72,7 @@ export class EventbridgeDynamodbStack extends cdk.Stack {
     /*
       Look for any events where the value of the "value2" field has changed.
     */
-    const rule = new events.Rule(this, "TargetFunctionRule", {
+    const rule1 = new events.Rule(this, "Target1FunctionRule", {
       eventBus: bus,
       eventPattern: {
         detailType: ["data-change"],
@@ -80,6 +80,44 @@ export class EventbridgeDynamodbStack extends cdk.Stack {
       },
     });
 
-    rule.addTarget(new targets.LambdaFunction(targetFn));
+    rule1.addTarget(new targets.LambdaFunction(target1Fn));
+
+    /*
+      An example downstream function that is only interested in customers being added/deleted (but not updated).
+    */
+    const target2Fn = new lambda.Function(this, "Target2Function", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "..", "src", "target-lambda")
+      ),
+    });
+
+    /*
+      Look for any INSERT or REMOVE events where the id prefix indicates a customer record.
+    */
+    const customerPrefix = "customer-";
+
+    const rule2 = new events.Rule(this, "Target2FunctionRule", {
+      eventBus: bus,
+      eventPattern: {
+        detailType: ["data-change"],
+        detail: {
+          eventName: ["INSERT", "REMOVE"],
+          dynamodb: {
+            $or: [
+              {
+                NewImage: { id: { S: events.Match.prefix(customerPrefix) } },
+              },
+              {
+                OldImage: { id: { S: events.Match.prefix(customerPrefix) } },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    rule2.addTarget(new targets.LambdaFunction(target2Fn));
   }
 }
