@@ -1,16 +1,85 @@
-import * as cdk from 'aws-cdk-lib';
-import { Construct } from 'constructs';
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as cdk from "aws-cdk-lib";
+import { Construct } from "constructs";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as path from "path";
+import { Duration } from "aws-cdk-lib";
 
 export class EventbridgeDynamodbStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // The code that defines your stack goes here
+    /*
+      The table we want to publish events from.
+    */
+    const table = new dynamodb.Table(this, "DynamoTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecovery: true,
+      partitionKey: {
+        name: "id",
+        type: dynamodb.AttributeType.STRING,
+      },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
 
-    // example resource
-    // const queue = new sqs.Queue(this, 'EventbridgeDynamodbQueue', {
-    //   visibilityTimeout: cdk.Duration.seconds(300)
-    // });
+    const streamFn = new lambda.Function(this, "StreamFunction", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "..", "src", "stream-lambda")
+      ),
+    });
+
+    table.grantStreamRead(streamFn.grantPrincipal);
+
+    /*
+      This function will enrich the events with some additional derived fields
+      and publish them out to EventBridge.
+    */
+    streamFn.addEventSource(
+      new DynamoEventSource(table, {
+        startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+        bisectBatchOnError: true,
+        maxRecordAge: Duration.hours(24),
+        retryAttempts: 10,
+      })
+    );
+
+    /*
+      We'll use a custom event bus just to keep things tidy.
+    */
+    const bus = new events.EventBus(this, "EventBus", {
+      eventBusName: "data-change-events",
+    });
+
+    bus.grantPutEventsTo(streamFn.grantPrincipal);
+
+    /*
+      An example downstream function that is interested in some subset of our events.
+    */
+    const targetFn = new lambda.Function(this, "TargetFunction", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "..", "src", "target-lambda")
+      ),
+    });
+
+    /*
+      Look for any events where the value of the "value2" field has changed.
+    */
+    const rule = new events.Rule(this, "TargetFunctionRule", {
+      eventBus: bus,
+      eventPattern: {
+        detailType: ["data-change"],
+        detail: { changedFields: ["value2"] },
+      },
+    });
+
+    rule.addTarget(new targets.LambdaFunction(targetFn));
   }
 }

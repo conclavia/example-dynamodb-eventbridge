@@ -1,14 +1,13 @@
-# Welcome to your CDK TypeScript project
+# DynamoDB => EventBridge => Lambda
 
-This is a blank project for CDK development with TypeScript.
+This is a quick-and-dirty example wiring up a DynamoDB event stream to AWS EventBridge using the AWS CDK.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+It deploys:
 
-## Useful commands
+- DynamoDB table with event stream
+- Custom EventBridge Event Bus
+- "Stream" Lambda Function that listens to the event stream and forwards events to our bus
+- EventBridge rule to filter events where the "value2" field changes
+- "Target" downstream Lambda function that listens for events from our rule and prints them out
 
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
-* `npm run test`    perform the jest unit tests
-* `cdk deploy`      deploy this stack to your default AWS account/region
-* `cdk diff`        compare deployed stack with current state
-* `cdk synth`       emits the synthesized CloudFormation template
+The code is not Production-ready and should be used for demonstration purposes only.
